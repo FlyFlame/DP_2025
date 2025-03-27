@@ -1,0 +1,143 @@
+//tento skript prování export NDVI pro zájmové oblsati z dat sentinel - 2
+var czBorders = udos.filter(ee.Filter.eq("COUNTRY_NA", "Czechia"));
+print("České hranice:", czBorders);
+
+// Dissolve + simplify pro získání jednoho polygonu
+var czGeometry = czBorders.first().geometry().dissolve().simplify(1000);
+print("Geometrie ČR (opravená):", czGeometry);
+
+var centroid = czGeometry.centroid().coordinates();
+print("Centroid ČR:", centroid);
+
+// Získání bounding boxu
+var bounds = czGeometry.bounds();
+var coords = ee.List(bounds.coordinates().get(0)); // Hlavní seznam souřadnic
+
+// Získání min/max souřadnic bounding boxu
+var minLon = ee.Number(ee.List(coords.get(0)).get(0));
+var minLat = ee.Number(ee.List(coords.get(0)).get(1));
+var maxLon = ee.Number(ee.List(coords.get(2)).get(0));
+var maxLat = ee.Number(ee.List(coords.get(2)).get(1));
+var midLon = ee.Number(centroid.get(0));
+var midLat = ee.Number(centroid.get(1));
+
+// Vytvoření 4 regionů jako obdélníků
+var nw = ee.Geometry.Rectangle([minLon, midLat, midLon, maxLat]);
+var ne = ee.Geometry.Rectangle([midLon, midLat, maxLon, maxLat]);
+var sw = ee.Geometry.Rectangle([minLon, minLat, midLon, midLat]);
+var se = ee.Geometry.Rectangle([midLon, minLat, maxLon, midLat]);
+
+// Vytvoření FeatureCollection pro 4 regiony
+var regions = ee.FeatureCollection([
+  ee.Feature(nw, {region_id: 1, name: "Northwest"}),
+  ee.Feature(ne, {region_id: 2, name: "Northeast"}),
+  ee.Feature(sw, {region_id: 3, name: "Southwest"}),
+  ee.Feature(se, {region_id: 4, name: "Southeast"})
+]);
+
+print("Rozdělené regiony:", regions);
+// maska
+// Maska oblačnosti pro Sentinel-2
+function maskCloudsSentinel(image) {
+  var qa = image.select('QA60');
+  var cloudBitMask = (1 << 10); // Clouds
+  var cirrusBitMask = (1 << 11); // Cirrus
+  var mask = qa.bitwiseAnd(cloudBitMask).eq(0)
+              .and(qa.bitwiseAnd(cirrusBitMask).eq(0));
+  return image.updateMask(mask);
+}
+
+// Výpočet NDVI
+function computeNDVIManually(image) {
+  var ndvi = image.normalizedDifference(['B8', 'B4']).rename('NDVI');
+  return image.addBands(ndvi);
+}
+
+// Filtrace lesů a nadmořské výšky
+var forest = ee.Image('projects/ee-xchal024/assets/lesy_all_CZ');
+var broadleafForest = forest.eq(1);
+
+var elevation = ee.Image('USGS/SRTMGL1_003');
+var lowElevation = elevation.lte(300);
+
+// Kombinace podmínek
+var filteredForest = broadleafForest.and(lowElevation).selfMask();
+
+// Načtení a zpracování NDVI
+function processSentinel2(collection) {
+  return collection
+    .filterBounds(filteredForest.geometry())
+    .map(maskCloudsSentinel)
+    .map(computeNDVIManually)
+    .select('NDVI');
+}
+
+// Načtení Sentinel-2 
+var sentinel2NDVI = processSentinel2(
+  ee.ImageCollection("COPERNICUS/S2_SR_HARMONIZED").filterDate('2015-06-23', '2024-10-30')
+);
+
+// **Výpočet NDVI pro regiony
+// Seznam regionů na client-side
+var regionList = regions.toList(regions.size()).getInfo();
+var yearsList = ee.List.sequence(2015, 2024).getInfo(); // Převod na client-side
+
+// Prázdný FeatureCollection pro uložení všech dat
+var allNDVI = ee.FeatureCollection([]);
+
+// Procházení regionů
+regionList.forEach(function(region) {
+  var regionFeature = ee.Feature(region);
+  var regionGeom = regionFeature.geometry();
+  var regionID = regionFeature.get('region_id');
+  var regionName = regionFeature.get('name'); // Už je client-side string
+
+  var regionalNDVI = sentinel2NDVI.filterBounds(regionGeom);
+
+  // interace přes roky
+  yearsList.forEach(function(year) {
+    var startDate = ee.Date.fromYMD(year, 1, 1);
+    var endDate = ee.Date.fromYMD(year, 12, 31);
+    var days = ee.List.sequence(0, endDate.difference(startDate, 'day').subtract(1));
+
+    var dailyNDVI = days.map(function(day) {
+      var date = startDate.advance(day, 'day');
+      var filtered = regionalNDVI.filterDate(date, date.advance(1, 'day'));
+
+      return ee.Algorithms.If(
+        filtered.size().gt(0),
+        ee.Feature(null, {
+          'date': date.format('YYYY-MM-dd'),
+          'region_id': regionID,
+          'region_name': regionName,
+          'year': year,  // Přidání roku do CSV
+          'mean_NDVI': filtered.mean().reduceRegion({
+            reducer: ee.Reducer.mean(),
+            geometry: filteredForest.clip(regionGeom).geometry(),
+            scale: 30,
+            bestEffort: true,
+            tileScale: 16
+          }).get('NDVI')
+        }),
+        null
+      );
+    });
+
+    
+    allNDVI = allNDVI.merge(ee.FeatureCollection(dailyNDVI));
+  });
+});
+
+//Export
+Export.table.toDrive({
+  collection: allNDVI,
+  description: 'NDVI_Sentinel2_All_Regions_Years',
+  fileFormat: 'CSV',
+  selectors: ['date', 'region_id', 'region_name', 'mean_NDVI']
+});
+
+// Vizualizace
+Map.centerObject(regions, 7);
+Map.addLayer(regions, {color: 'red'}, "Rozdělené regiony ČR");
+Map.addLayer(filteredForest, {min: 0, max: 1, palette: ['green']}, 'Filtered Forest');
+Map.addLayer(sentinel2NDVI, {min: -1, max: 1, palette: ["blue", "white", "green"]}, "Sentinel-2 NDVI");
