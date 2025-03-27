@@ -1,0 +1,88 @@
+// Níže je skript pro export a převedení teplot MODIS s maximálníma, minimálíma a průměrnýma teplotama. Je nutné, aby byl nahráta zájmová oblast do variable "forest"
+
+// Načtení hranic ČR, rozdělení do regionů
+var czBorders = ee.FeatureCollection('FAO/GAUL/2015/level0')
+  .filter(ee.Filter.eq("ADM0_NAME", "Czech Republic"));
+var czGeometry = czBorders.geometry().dissolve().simplify(1000);
+var centroid = czGeometry.centroid().coordinates();
+var bounds = czGeometry.bounds();
+var coords = ee.List(bounds.coordinates().get(0));
+
+var minLon = ee.Number(ee.List(coords.get(0)).get(0));
+var minLat = ee.Number(ee.List(coords.get(0)).get(1));
+var maxLon = ee.Number(ee.List(coords.get(2)).get(0));
+var maxLat = ee.Number(ee.List(coords.get(2)).get(1));
+var midLon = ee.Number(centroid.get(0));
+var midLat = ee.Number(centroid.get(1));
+
+var nw = ee.Geometry.Rectangle([minLon, midLat, midLon, maxLat]);
+var ne = ee.Geometry.Rectangle([midLon, midLat, maxLon, maxLat]);
+var sw = ee.Geometry.Rectangle([minLon, minLat, midLon, midLat]);
+var se = ee.Geometry.Rectangle([midLon, minLat, maxLon, midLat]);
+
+var regions = ee.FeatureCollection([
+  ee.Feature(nw, {region_id: 1, region_name: "Northwest"}),
+  ee.Feature(ne, {region_id: 2, region_name: "Northeast"}),
+  ee.Feature(sw, {region_id: 3, region_name: "Southwest"}),
+  ee.Feature(se, {region_id: 4, region_name: "Southeast"})
+]);
+
+// Filtrace listnatých lesů v nížinách
+var forest = ee.Image('projects/ee-jmeno/assets/zajmova_oblast');
+var broadleafForest = forest.eq(1);
+var elevation = ee.Image('USGS/SRTMGL1_003');
+var lowElevation = elevation.lte(300);
+var filteredForest = broadleafForest.and(lowElevation).selfMask();
+
+// MODIS LST zpracování
+var modisLST = ee.ImageCollection("MODIS/061/MOD11A1")
+  .filterDate('2000-01-01', '2024-10-31')
+  .filterBounds(filteredForest.geometry())
+  .select('LST_Day_1km')
+  .map(function(image) {
+    return ee.Image(image)
+      .multiply(0.02)
+      .subtract(273.15)
+      .rename('LST_Celsius')
+      .copyProperties(image, image.propertyNames());
+  });
+
+// Výpočet denních statistik pro každý region
+var dailyStats = modisLST.map(function(img) {
+  var dateStr = img.date().format('yyyy-MM-dd');
+  
+  return regions.map(function(region) {
+    var regionGeom = ee.Feature(region).geometry();
+    var masked = img.updateMask(filteredForest).clip(regionGeom);
+    
+    var stats = masked.reduceRegion({
+      reducer: ee.Reducer.mean().combine({
+        reducer2: ee.Reducer.minMax(),
+        sharedInputs: true
+      }),
+      geometry: regionGeom.intersection(filteredForest.geometry(), 1),
+      scale: 1000,
+      bestEffort: true
+    });
+
+    return ee.Feature(null, {
+      'date': dateStr,
+      'region_id': region.get('region_id'),
+      'region_name': region.get('region_name'),
+      'mean_LST': stats.get('LST_Celsius_mean'),
+      'min_LST': stats.get('LST_Celsius_min'),
+      'max_LST': stats.get('LST_Celsius_max')
+    });
+  });
+}).flatten();
+
+// Export do CSV
+Export.table.toDrive({
+  collection: dailyStats,
+  description: 'Daily_LST_Broadleaf_Regions',
+  fileFormat: 'CSV'
+});
+
+// Zobrazení
+Map.centerObject(regions);
+Map.addLayer(filteredForest, {min: 0, max: 1, palette: ['green']}, 'Listnaté lesy v nížinách');
