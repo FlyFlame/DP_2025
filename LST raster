@@ -1,0 +1,68 @@
+// Tento skript poskytuje restrový výstup LST pomocí dat MODIS
+ // Načtení hranic ČR
+var czBorders = ee.FeatureCollection('FAO/GAUL/2015/level0')
+  .filter(ee.Filter.eq('ADM0_NAME', 'Czech Republic'));
+
+// Definování časové řady
+var years = ee.List.sequence(2000, 2024); 
+var months = ee.List.sequence(1, 12);
+
+
+// Funkce pro interpolaci LST měsíčně
+function processMonth(year, month) {
+  year = ee.Number(year);
+  month = ee.Number(month);
+
+  var startDate = ee.Date.fromYMD(year, month, 1);
+  var endDate = startDate.advance(1, 'month');
+
+  // Načtení LST a kontrola
+  var modisLSTCollection = ee.ImageCollection('MODIS/061/MOD11A1')
+    .select('LST_Day_1km')
+    .filterDate(startDate, endDate);
+
+  var hasData = modisLSTCollection.size().gt(0);
+
+  // Pokud neexistují data = ull
+  var modisLST = ee.Algorithms.If(
+    hasData, 
+    modisLSTCollection.mean().multiply(0.02).subtract(273.15).rename('LST'), 
+    null
+  );
+
+  // Pokud data neexistují, skip
+  return ee.Algorithms.If(hasData, ee.Image(modisLST), null);
+}
+
+// Test
+var monthlyImages = years.map(function(year) {
+  return months.map(function(month) {
+    return processMonth(year, month);
+  });
+}).flatten().removeAll([null]); // Odstranění měsíců bez dat
+
+// Převod na ImageCollection a příprava pro spojení do jednoho TIFF
+var multiBandImage = ee.ImageCollection(monthlyImages).toBands();
+
+// Oprava názvů pásem
+var actualBandNames = multiBandImage.bandNames(); // Skutečný počet pásem
+var bandNames = years.map(function(y) {
+  return months.map(function(m) {
+    return ee.Number(y).format('%d').cat('_').cat(ee.Number(m).format('%02d'));
+  });
+}).flatten();
+var validBandNames = bandNames.slice(0, actualBandNames.size()); 
+
+multiBandImage = multiBandImage.rename(validBandNames);
+
+// Export celého datasetu jako TIFF 
+Export.image.toDrive({
+  image: multiBandImage,
+  description: 'Interpolovana_LST_Monthly_MultiBand',
+  folder: 'GEE_Exports',
+  fileNamePrefix: 'Interpolovana_LST_2000_2024_Monthly',
+  region: czBorders.geometry(),
+  scale: 1000,
+  crs: 'EPSG:4326',
+  maxPixels: 1e13
+});
