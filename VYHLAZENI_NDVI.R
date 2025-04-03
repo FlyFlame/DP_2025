@@ -6,8 +6,8 @@ library(tools)
 library(gridExtra)
 
 # Načtení vyhlazených dat
-data_folder <-("C:/Users/easyl/Desktop/GEE_vytupy/NDVI_filtrovana//")
-output_folder <-("C:/Users/easyl/Desktop/GEE_vytupy/NDVI_filtrovana//")
+data_folder <-("data")
+output_folder <-("data")
 # Vytvoření složky pro export, pokud neexistuje
 if (!dir.exists(output_folder)) {
   dir.create(output_folder, recursive = TRUE)
