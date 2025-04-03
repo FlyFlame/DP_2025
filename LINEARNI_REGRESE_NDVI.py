@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from scipy.stats import linregress
 
 # Načtení CSV souboru se správným oddělovačem
-df = pd.read_csv(r"C:\Users\easyl\Desktop\GEE_vytupy\NDVI_filtrovana/NDVI_filtered_NDVI_SEVEROZAPAD_LANDSAT_S.csv", delimiter=",")  # Změň na "," pokud je CSV odděleno čárkou
+df = pd.read_csv(r"Data.csv", delimiter=",")  
 
 # Ověření názvů sloupců
 print("Sloupce v CSV:", df.columns.tolist())
@@ -14,7 +14,7 @@ df.columns = df.columns.str.strip()
 
 # Ověření, že sloupec existuje
 if "doy" not in df.columns or "NDVI_smooth" not in df.columns:
-    raise ValueError("Chyba: Sloupec 'doy' nebo 'NDVI_smooth' nebyl nalezen!")
+    raise ValueError("Chyba")
 
 # Extrakce dat
 x = df["year"]  # Den v roce jako časová osa
