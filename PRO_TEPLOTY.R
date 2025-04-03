@@ -3,10 +3,10 @@ library(readr)
 library(tidyr)
 library(ggplot2)
 
-# Definice složky s MODIS teplotními soubory
-modis_folder <- "C:/Users/easyl/Desktop/GEE_vytupy/MODIS_TEMPETURES_DAY_NIGHT"
+# Definice složky s MODIS
+modis_folder <- "Data.csv"
 
-#  Získání seznamu všech CSV souborů ve složce
+
 modis_files <- list.files(path = modis_folder, pattern = "*.csv", full.names = TRUE)
 
 # Načtení všech souborů se správným formátem
