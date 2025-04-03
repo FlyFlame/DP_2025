@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from scipy.stats import linregress
 
 # Cesta k souboru
-file_path = r"C:\Users\easyl\Desktop\GEE_vytupy/Processed_Layer_Data.csv"
+file_path = r"Data.csv"
 
 # Načtení souboru
 expected_columns = ["Layer", "Min", "Max", "Mean", "Std"]
