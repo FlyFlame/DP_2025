@@ -4,8 +4,8 @@ library(tidyr)
 library(ggplot2)
 library(forecast)
 
-# Načtení MODIS teplotních dat
-modis_folder <- "C:/Users/easyl/Desktop/GEE_vytupy/MODIS_TEMPETURES_DAY_NIGHT"
+# Načtení MODIS
+modis_folder <- "Data"
 modis_files <- list.files(path = modis_folder, pattern = "*.csv", full.names = TRUE)
 
 modis_data_list <- lapply(modis_files, function(file) {
