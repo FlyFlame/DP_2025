@@ -1,0 +1,119 @@
+// Níže je skript v programovacím jazyce JavaScript v Google Earth Engine pro export NDVi hodnot ze zájmového území litnatých lesů Čr
+//Načtení datasetu hranic států
+var usdos = ee.FeatureCollection("USDOS/LSIB/2017");
+
+// Filtrace pro Českou republiku
+var czBorders = usdos.filter(ee.Filter.eq("COUNTRY_NA", "Czechia"));
+print("České hranice:", czBorders);
+
+
+var czGeometry = czBorders.first().geometry().dissolve().simplify(1000);
+print("Geometrie ČR (opravená):", czGeometry);
+
+// Výpočet centroidu ČR
+var centroid = czGeometry.centroid().coordinates();
+print("Centroid ČR:", centroid);
+
+// Získání bounding boxu a souřadnic
+var bounds = czGeometry.bounds();
+var coords = ee.List(bounds.coordinates().get(0));
+
+var minLon = ee.Number(ee.List(coords.get(0)).get(0));
+var minLat = ee.Number(ee.List(coords.get(0)).get(1));
+var maxLon = ee.Number(ee.List(coords.get(2)).get(0));
+var maxLat = ee.Number(ee.List(coords.get(2)).get(1));
+var midLon = ee.Number(centroid.get(0));
+var midLat = ee.Number(centroid.get(1));
+
+print("minLon:", minLon, "maxLon:", maxLon, "midLon:", midLon);
+print("minLat:", minLat, "maxLat:", maxLat, "midLat:", midLat);
+
+// Vytvoření 4 regionů jako obdélníků
+var nw = ee.Geometry.Rectangle([minLon, midLat, midLon, maxLat]);
+var ne = ee.Geometry.Rectangle([midLon, midLat, maxLon, maxLat]);
+var sw = ee.Geometry.Rectangle([minLon, minLat, midLon, midLat]);
+var se = ee.Geometry.Rectangle([midLon, minLat, maxLon, midLat]);
+
+// Vytvoření FeatureCollection pro 4 regiony
+var regions = ee.FeatureCollection([
+  ee.Feature(nw, {region_id: 1, name: "Northwest"}),
+  ee.Feature(ne, {region_id: 2, name: "Northeast"}),
+  ee.Feature(sw, {region_id: 3, name: "Southwest"}),
+  ee.Feature(se, {region_id: 4, name: "Southeast"})
+]);
+
+print("Rozdělené regiony:", regions);
+
+// Přidání regionů do mapy pro vizuální kontrolu
+Map.centerObject(regions, 7);
+Map.addLayer(regions, {color: 'red'}, "ČR regiony");
+
+
+
+// Načtení lesů a filtrace podle nadmořské výšky
+var forest = ee.Image('projects/ee-xchal024/assets/lesy_all_CZ');
+var broadleafForest = forest.eq(1);
+var elevation = ee.Image('USGS/SRTMGL1_003');
+var lowElevation = elevation.lte(300);
+var filteredForest = broadleafForest.and(lowElevation).selfMask();
+Map.addLayer(filteredForest, {min: 0, max: 1, palette: ['green']}, 'Filtered Forest');
+
+// Načtení MODIS LST a zpracování na denní úroveň** 
+function processMODIS(image) {
+  return image
+    .select('LST_Day_1km')
+    .multiply(0.02).subtract(273.15) // Převod na °C
+    .rename('LST_Celsius')
+    .updateMask(image.select('QC_Day').eq(0)) // Maskování 
+    .set('date', image.date().format('YYYY-MM-dd')); // Přidání datumu
+}
+
+var modisLST = ee.ImageCollection("MODIS/061/MOD11A1")
+  .filterDate('2000-01-01', '2024-10-30')
+  .map(processMODIS);
+
+Map.addLayer(modisLST.mean(), {min: -10, max: 40, palette: ["blue", "white", "red"]}, "MODIS LST");
+
+// Výpočet denní teploty pro každý region
+var days = ee.List.sequence(0, ee.Date('2024-10-30').difference(ee.Date('2000-01-01'), 'day'));
+var dailyLST = ee.FeatureCollection(days.map(function(day) {
+  var date = ee.Date('2000-01-01').advance(day, 'day');
+  var dailyImage = modisLST.filterDate(date, date.advance(1, 'day')).mean();
+  
+  // Kontrola, zda dailyImage obsahuje data
+  var hasData = dailyImage.bandNames().size().gt(0);
+  
+  return ee.Algorithms.If(hasData, 
+    dailyImage.reduceRegions({
+      collection: regions, 
+      reducer: ee.Reducer.mean(), 
+      scale: 10000,  
+      tileScale: 16,
+
+      maxPixelsPerRegion: 1e6
+    }).map(function(feature) {
+      return feature.set({
+        'date': date.format('YYYY-MM-dd'),
+        'region_id': feature.get('region_id'),
+        'region_name': feature.get('name'),
+        'mean_LST': feature.get('LST_Celsius')
+      });
+    }), 
+    ee.FeatureCollection([ 
+      ee.Feature(null, {
+        'date': date.format('YYYY-MM-dd'),
+        'region_id': null,
+        'region_name': null,
+        'mean_LST': null
+      })
+    ])
+  );
+}).flatten());
+
+// Export denních dat do CSV
+Export.table.toDrive({
+  collection: dailyLST,
+  description: 'MODIS_LST_Daily_By_Region',
+  fileFormat: 'CSV',
+  selectors: ['date', 'region_id', 'region_name', 'mean_LST']
+});
