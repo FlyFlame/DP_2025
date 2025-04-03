@@ -3,15 +3,15 @@ library(dplyr)
 library(ggplot2)
 
 #  Načtení a zpracování dat
-ndvi_data <- read.csv("C:\\Users\\easyl\\Downloads\\NDVI_filtered_NDVI_JIHOVYCHOD_LANDSAT_S.csv")
+ndvi_data <- read.csv("data.csv")
 ndvi_data$date <- as.Date(ndvi_data$date)
 
 #  Přidání roku a DOY do datasetu
 ndvi_data <- ndvi_data %>%
   mutate(year = as.numeric(format(date, "%Y")),  # Přidání sloupce s rokem
-         doy = as.numeric(format(date, "%j")))   # Den v roce (1–365)
+         doy = as.numeric(format(date, "%j")))   # Den v roce 
 
-#  Inicializace prázdného dataframe pro ukládání výsledků
+#  Vytvoření prázdného dataframe pro ukládání výsledků
 results <- data.frame(
   year = integer(),
   sos_trs = integer(), eos_trs = integer(),
@@ -73,10 +73,10 @@ write.csv(results, "C:\\Users\\easyl\\Downloads\\LANDSAT_PHENO_JIHOVYCHOD.csv", 
 library(ggplot2)
 library(tidyr)
 
-# Načtení výsledků (pokud již nejsou v paměti)
+# Načtení výsledků
 results <- read.csv("C:\\Users\\easyl\\Downloads\\LANDSAT_PHENO_JIHOVYCHOD.csv")
 
-# Převedení dat do dlouhého formátu pro ggplot
+# Převedení dat pro ggplot
 results_long <- results %>%
   pivot_longer(cols = -year, names_to = "phenophase", values_to = "doy")
 
