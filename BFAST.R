@@ -53,4 +53,4 @@ if (!is.null(bfast_result$output[[1]]$residuals)) {
   plot(bfast_result$output[[1]]$residuals, main = "BFAST Residuals", xlab = "Time", ylab = "Residuals")
 }
 
-cat("BFAST analýza dokončena a vizualizována.")
+
